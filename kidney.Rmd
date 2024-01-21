@@ -1,0 +1,778 @@
+---
+title: "kidney data"
+author: "riley isabel shatz"
+date: "2023-12-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(leaflet)
+library(mapview)
+library(tidycensus)
+library(dplyr)
+library(censusapi)
+library(tidyverse)
+library(sf)
+
+```
+
+```{r}
+
+hospital_url <- "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Hospital/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson"
+
+geojson_data <- st_read(hospital_url)
+
+census_api_key("d7e45bc46cdb90cc4975cc0898a29b95d09f15d0", install = TRUE, overwrite=TRUE)
+
+
+
+```
+
+```{r}
+prev.esrd <- read.csv("~/Downloads/Figure 1.7.csv")
+incidence_esrd <- read.csv("~/Downloads/Figure 1.7.csv")
+esrd.data <- merge(prev.esrd, incidence_esrd, by = "Category") 
+
+esrd.data <- esrd.data %>% 
+  rename(incidence.esrd = Adjusted.y) #figure 1.3 
+
+esrd.data <- esrd.data %>% 
+  rename(prev.esrd = Adjusted.x) #figure 1.7
+
+previous.care <- read.csv("~/Downloads/Figure 1.12.csv")
+esrd.data <- merge(esrd.data, previous.care, by = "Category") 
+
+esrd.data <- esrd.data %>% 
+  rename(previous_care = Figure.1.12) #figure 1.12
+
+incident.gfr <- read.csv("~/Downloads/Figure 1.16.csv")
+esrd.data <- merge(esrd.data,incident.gfr, by = "Category") 
+
+esrd.data <- esrd.data %>% 
+  rename(lowgfr.incident = Figure.1.16) # figure 1.16 
+
+black.mortality <- read.csv("~/Downloads/Figure 6.3 (2).csv")
+esrd.data <- merge(esrd.data, black.mortality, by = "Category") 
+
+white.mortality <- read.csv("~/Downloads/Figure 6.3 (3).csv")
+esrd.data <- merge(esrd.data, white.mortality, by = "Category") 
+
+transplant.mortality <- read.csv("~/Downloads/Figure 6.2a (8).csv")
+esrd.data <- merge(esrd.data, transplant.mortality, by = "Category") 
+
+peritoneal.dialysis <- read.csv("~/Downloads/Figure 6.2a (7).csv")
+esrd.data <- merge(esrd.data, peritoneal.dialysis, by = "Category") 
+
+hemodialysis <- read.csv("~/Downloads/Figure 6.2a (6).csv")
+esrd.data <- merge(esrd.data, hemodialysis, by = "Category") 
+
+esrd.mortality <- read.csv("~/Downloads/Figure 6.2a (5).csv")
+esrd.data <- merge(esrd.data, esrd.mortality, by = "Category") # figure 6.2a
+
+esrd.data <- esrd.data %>% 
+  rename(esrd.mortality = ESRD)
+
+```
+
+```{r}
+county_insurance <- get_acs(
+  geography = "county",
+  variables = "DP03_0096P",
+  year = 2020,
+  geometry = TRUE
+) %>% st_transform(crs = 4326)
+class(county_insurance)
+
+Health_Service_Areas <- read_excel("~/Downloads/Health.Service.Areas.xls")
+county.HSA <- merge(county_insurance, Health_Service_Areas, by.x = "GEOID", by.y = "FIPS")
+
+esrd.data <- left_join(
+  county.HSA,
+  esrd.data,
+  by = c("HSA # (NCI Modified)" = "Category")
+)
+
+
+esrd.data <- separate(esrd.data,
+                     col = `State-county`,  # name of column you want to change, in this case State_county
+                     into = c("state", "county"),  # set new column names 
+                     sep = ": ")
+
+esrd.data <- separate(esrd.data,
+                     col = county,  # name of column you want to change
+                     into = c("county", "FIPs.1"),  # set new column names 
+                     sep = "\\(")
+
+# fill missing for prevalence esrd
+esrd.data <- esrd.data %>% fill(prev.esrd, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(incidence.esrd, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(previous_care, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(lowgfr.incident, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(Black, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(White, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(Transplant, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(Peritoneal.dialysis, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(Hemodialysis, .direction = 'down')
+
+# fill missing 
+esrd.data <- esrd.data %>% fill(esrd.mortality, .direction = 'down')
+
+esrd_sf <- st_as_sf(esrd.data)
+
+
+# Now, explicitly transform the geometry coordinates
+esrd_sf <- st_transform(esrd_sf, crs = 4326)
+
+
+
+```
+
+```{r}
+library(mapboxapi)
+
+mb_access_token("pk.eyJ1IjoicnNoYXR6IiwiYSI6ImNscmxpdXZ0aTBtNTgycnBrYW92ZXUwYnMifQ.yfaG7jGTD_dr-5Cds5EBBg", overwrite = TRUE, install = TRUE)
+
+
+hospital_data <- st_read(hospital_url) %>%
+  filter(str_detect(TYPE, "GENERAL ACUTE CARE")) %>%
+   filter(str_detect(STATUS, "OPEN")) %>%
+  st_transform(4326) %>%
+  distinct(ID, .keep_all = TRUE)
+
+hospitals <- st_as_sf(hospital_data, coords = c("LONGITUDE", "LATITUDE")) %>% 
+    st_set_crs(4326)
+
+dist <- esrd_sf %>%
+  st_centroid() %>%
+  st_distance(hospitals) 
+
+dist[1:5, 1:5]
+
+min_dist <- dist %>%
+  apply(1, min) %>%
+  as.vector() %>%
+  magrittr::divide_by(1000)
+
+# Conversion factor
+km_to_miles <- 0.621371
+
+# Convert distances from kilometers to miles
+min_dist_mi <- min_dist * km_to_miles
+
+esrd_sf$min_dist_mi <- round(min_dist_mi, 2)
+
+
+```
+
+```{r}
+
+palette <- colorNumeric('YlOrRd', domain = esrd_sf$esrd.mortality)
+bins <- c(100:400, Inf)
+paletteBinned <- colorBin('YlOrRd', domain = esrd_sf$esrd.mortality, bins = bins)
+
+counties_centroids <- st_centroid(esrd_sf)
+
+
+label <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "ESRD Mortality Rate: ", esrd_sf$esrd.mortality,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette(esrd_sf$esrd.mortality),
+              label = label,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "ESRD Mortality Rate",
+    pal = colorBin("YlOrRd", esrd_sf$esrd.mortality, bins = 5, na.color = "transparent"),
+    values = esrd_sf$esrd.mortality
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map
+
+```
+
+```{r}
+summary(esrd_sf$prev.esrd)
+palette.1 <- colorNumeric('YlOrRd', domain = esrd_sf$prev.esrd)
+bins.1 <- c(930:10300, Inf)
+paletteBinned.1 <- colorBin('YlOrRd', domain = esrd_sf$prev.esrd, bins = bins)
+label.1 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "Prevalence of ESRD: ", esrd_sf$prev.esrd,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.1 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.1(esrd_sf$prev.esrd),
+              label = label.1,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "Prevalence Rate of ESRD",
+    pal = colorBin("YlOrRd", esrd_sf$prev.esrd, bins = 5, na.color = "transparent"),
+    values = esrd_sf$prev.esrd
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.1
+
+
+```
+
+```{r}
+summary(esrd_sf$incidence.esrd)
+palette.2 <- colorNumeric('YlOrRd', domain = esrd_sf$incidence.esrd)
+bins.2 <- c(930:10300, Inf)
+paletteBinned.2 <- colorBin('YlOrRd', domain = esrd_sf$incidence.esrd, bins = bins)
+label.2 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "Incidence of ESRD: ", esrd_sf$incidence.esrd,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.2 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.2(esrd_sf$incidence.esrd),
+              label = label.2,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "Incidence Rate of ESRD",
+    pal = colorBin("YlOrRd", esrd_sf$incidence.esrd, bins = 5, na.color = "transparent"),
+    values = esrd_sf$incidence.esrd
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.2
+
+
+
+```
+
+```{r}
+summary(esrd_sf$previous_care)
+palette.3 <- colorNumeric('YlOrRd', domain = esrd_sf$previous_care)
+bins.3 <- c(14:70, Inf)
+paletteBinned.3 <- colorBin('YlOrRd', domain = esrd_sf$previous_care, bins = bins)
+label.3 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "% of Previous Care >12 Months of ESRD: ", esrd_sf$previous_care,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.3 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.3(esrd_sf$previous_care),
+              label = label.3,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "% of Previous Care >12 Months of ESRD",
+    pal = colorBin("YlOrRd", esrd_sf$previous_care, bins = 5, na.color = "transparent"),
+    values = esrd_sf$previous_care
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.3
+
+
+
+```
+
+```{r}
+summary(esrd_sf$lowgfr.incident)
+palette.4 <- colorNumeric('YlOrRd', domain = esrd_sf$lowgfr.incident)
+bins.4 <- c(45:440, Inf)
+paletteBinned.4 <- colorBin('YlOrRd', domain = esrd_sf$lowgfr.incident, bins = bins)
+label.4 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "% of Incident ESRD Patients <10 GFR: ", esrd_sf$lowgfr.incident,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.4 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.4(esrd_sf$lowgfr.incident),
+              label = label.4,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "% of Incident ESRD Patients <10 GFR",
+    pal = colorBin("YlOrRd", esrd_sf$lowgfr.incident, bins = 5, na.color = "transparent"),
+    values = esrd_sf$lowgfr.incident
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.4
+
+```
+
+
+```{r}
+summary(esrd_sf$Black)
+palette.5 <- colorNumeric('YlOrRd', domain = esrd_sf$Black)
+bins.5 <- c(45:440, Inf)
+paletteBinned.5 <- colorBin('YlOrRd', domain = esrd_sf$lowgfr.incident, bins = bins)
+label.5 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "ESRD Mortality Rate (Black patients): ", esrd_sf$Black,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.5 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.5(esrd_sf$Black),
+              label = label.5,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "ESRD Mortality Rate (Black patients)",
+    pal = colorBin("YlOrRd", esrd_sf$Black, bins = 5, na.color = "transparent"),
+    values = esrd_sf$Black
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.5
+
+
+
+```
+
+
+```{r}
+
+palette.6 <- colorNumeric('YlOrRd', domain = esrd_sf$White)
+
+label.6 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "ESRD Mortality Rate (White Patients): ", esrd_sf$White,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.6 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.6(esrd_sf$White),
+              label = label.6,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "ESRD Mortality Rate (White Patients)",
+    pal = colorBin("YlOrRd", esrd_sf$White, bins = 5, na.color = "transparent"),
+    values = esrd_sf$White
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.6
+
+
+```
+
+
+```{r}
+palette.7 <- colorNumeric('YlOrRd', domain = esrd_sf$Transplant)
+
+label.7 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "ESRD Mortality Rate (Transplant Patients): ", esrd_sf$Transplant,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.7 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.7(esrd_sf$Transplant),
+              label = label.7,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "ESRD Mortality Rate (Transplant Patients)",
+    pal = colorBin("YlOrRd", esrd_sf$Transplant, bins = 5, na.color = "transparent"),
+    values = esrd_sf$Transplant
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.7
+
+
+
+```
+
+```{r}
+palette.8 <- colorNumeric('YlOrRd', domain = esrd_sf$Hemodialysis)
+
+label.8 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "ESRD Mortality Rate (Hemodialysis Patients): ", esrd_sf$Hemodialysis,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.8 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.8(esrd_sf$Hemodialysis),
+              label = label.8,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "ESRD Mortality Rate (Hemodialysis Patients)",
+    pal = colorBin("YlOrRd", esrd_sf$Hemodialysis, bins = 5, na.color = "transparent"),
+    values = esrd_sf$Hemodialysis
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.8
+
+
+```
+
+```{r}
+palette.9 <- colorNumeric('YlOrRd', domain = esrd_sf$Peritoneal.dialysis)
+
+label.9 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "ESRD Mortality Rate (Peritoneal Patients): ", esrd_sf$Peritoneal.dialysis,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.9 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.9(esrd_sf$Peritoneal.dialysis),
+              label = label.9,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "ESRD Mortality Rate (Peritoneal Patients)",
+    pal = colorBin("YlOrRd", esrd_sf$Peritoneal.dialysis, bins = 5, na.color = "transparent"),
+    values = esrd_sf$Peritoneal.dialysis
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.9
+
+
+
+```
+
+
+```{r}
+palette.10 <- colorNumeric('YlOrRd', domain = esrd_sf$estimate)
+
+label.10 <- paste("County: ", esrd_sf$county, "<br/>",
+               "State: ", esrd_sf$state, "<br/>",
+                             "Percent of Population Insured: ", esrd_sf$estimate,"<br/>",
+                             "Distance to Nearest Hospital: ", esrd_sf$min_dist_mi)%>%
+  lapply(htmltools::HTML)
+
+leaflet_map.10 <- leaflet(esrd_sf) %>%
+  addTiles() %>%
+   addPolygons(data = esrd_sf,
+              color = 'white',
+              weight = 1,
+              smoothFactor = .3,
+              fillOpacity = .75,
+              fillColor = ~palette.10(esrd_sf$estimate),
+              label = label.10,
+              labelOptions = labelOptions(
+                style = list(color = 'gray30'),
+                textsize = '10px'),
+              highlightOptions = highlightOptions(
+                weight = 3,
+                color = 'dodgerblue'
+                ),
+    group = "Choropleth"
+  ) %>% 
+  addLegend(
+    "bottomright",
+    title = "Percent of Population Insured",
+    pal = colorBin("YlOrRd", esrd_sf$estimate, bins = 5, na.color = "transparent"),
+    values = esrd_sf$estimate
+  )%>%
+    addProviderTiles("CartoDB.Voyager") %>% 
+    addCircles(
+        data = hospitals, 
+        radius = 1,
+        color = "darkgreen",
+        opacity = 0.6, 
+        popup = paste0(hospitals$NAME, "<br />",
+                                     hospitals$CITY, ", ", hospitals$STATE),
+        group = "Hospitals") %>%
+  addLayersControl(
+    overlayGroups = c("Choropleth", "Hospitals"),
+    options = layersControlOptions(collapsed = TRUE)
+  )
+# Print the leaflet map
+leaflet_map.10
+
+
+```
