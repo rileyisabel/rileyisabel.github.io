@@ -1,0 +1,14 @@
+name: "riley's data"
+navbar:
+  title: "riley's data"
+left:
+  - text: "Home"
+href: index.html
+right: 
+  - icon: fa-envelope fa-lg
+href: mailto:<rileyshatz247@gmail.com>
+  - icon: fa-github fa-lg
+href: http://github.com/rileyisabel/
+  output:
+  html_document:
+  theme: PlainWhite

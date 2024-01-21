@@ -1,0 +1,17 @@
+---
+title: "Welcome"
+output: html_document
+---
+
+# Welcome to My Blog
+
+<img src="~Downloads/IMG_8063.jpg" style="width:50%">
+
+I'm Riley, a graduate of the University of Maryland with a Bachelors in Government and Politics, and a Masters in Applied Political Analytics. My focus was voter psychology, political behavior, and electoral politics. What I love about these subjects is defining what's hard to define: why we act the way we act politically, and think the way we think. Utilizing data visualizations to study these topics is a passion of mine. The goal of this blog is to have a free space to share data that I'm interested in, and hopefully educate my peers and students on how to produce good-looking data. 
+
+In my free time, I love listening to music, watching movies/tv, and being with my friends and loved ones. 
+
+## Latest Posts
+
+- [Post 1](kidney.knit.md)
+
